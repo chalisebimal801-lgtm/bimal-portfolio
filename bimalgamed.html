@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Racing Game - Winnable</title>
+<style>
+body { margin:0; font-family:Arial, sans-serif; background:#111; overflow:hidden; }
+#gameContainer { width:100%; height:100vh; position:relative; }
+canvas { display:block; }
+#hud {
+  position:absolute; top:10px; left:10px;
+  background:rgba(0,0,0,0.6); padding:10px; border-radius:6px;
+  font-size:14px; color:white;
+}
+#controls { margin-top:5px; }
+button { padding:5px 10px; margin:2px; cursor:pointer; font-weight:bold; }
+#chatgptLink {
+  position:absolute; top:10px; right:10px;
+  background:#007BFF; color:white; text-decoration:none;
+  padding:8px 12px; border-radius:5px; font-size:14px; font-weight:bold;
+  z-index:20;
+}
+#chatgptLink:hover { background:#0056b3; }
+#gameOverOverlay, #winOverlay {
+  display:none; position:absolute; top:0; left:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,0.85);
+  color:white; font-size:24px; text-align:center; padding-top:150px; z-index:30;
+}
+#gameOverOverlay button, #winOverlay button { margin-top:30px; padding:10px 20px; font-size:18px; cursor:pointer; }
+</style>
+</head>
+<body>
+<div id="gameContainer"></div>
+<div id="hud">
+  <div>Coins: <span id="coinCount">0</span></div>
+  <div>Level: <span id="level">1</span></div>
+  <div>Engine: <span id="engineLvl">1</span> | Tires: <span id="tireLvl">1</span></div>
+  <div id="controls">
+    <button id="pauseBtn">Pause</button>
+    <button id="restartBtn">Restart</button>
+    <button id="upgradeBtn">Upgrade</button>
+  </div>
+</div>
+<a id="chatgptLink" href="https://chatgpt.com/share/68caae6b-bf28-8005-a7df-b52b66472928" target="_blank">
+View ChatGPT Conversation
+</a>
+
+<!-- GAME OVER SCREEN -->
+<div id="gameOverOverlay">
+  <div>🚨 GAME OVER 🚨</div>
+  <div style="margin-top:20px;">Coins Collected: <span id="finalCoins">0</span></div>
+  <div>Level Reached: <span id="finalLevel">1</span></div>
+  <button id="gameOverRestartBtn">Restart Game</button>
+</div>
+
+<!-- YOU WIN SCREEN -->
+<div id="winOverlay">
+  <div>🏆 YOU WIN 🏆</div>
+  <div style="margin-top:20px;">Coins Collected: <span id="winCoins">0</span></div>
+  <div>Level Reached: <span id="winLevel">1</span></div>
+  <button id="winRestartBtn">Play Again</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
+<script>
+// ==== Scene setup ====
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.getElementById("gameContainer").appendChild(renderer.domElement);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff,0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff,0.8);
+dirLight.position.set(5,10,5);
+scene.add(dirLight);
+
+// Road with stripes
+const roadGroup = new THREE.Group();
+for(let i=0;i<500;i+=10){
+  const roadGeo = new THREE.PlaneGeometry(10,10);
+  const roadMat = new THREE.MeshBasicMaterial({color:i%20===0?0xffffff:0x333333, side:THREE.DoubleSide});
+  const segment = new THREE.Mesh(roadGeo, roadMat);
+  segment.rotation.x = Math.PI/2;
+  segment.position.z = -i;
+  roadGroup.add(segment);
+}
+scene.add(roadGroup);
+
+// Side barriers (walls)
+const wallGeo = new THREE.BoxGeometry(0.5,1,1000);
+const wallMat = new THREE.MeshBasicMaterial({color:0x444444});
+const leftWall = new THREE.Mesh(wallGeo, wallMat);
+leftWall.position.set(-5.25,0.5,-500);
+scene.add(leftWall);
+const rightWall = new THREE.Mesh(wallGeo, wallMat);
+rightWall.position.set(5.25,0.5,-500);
+scene.add(rightWall);
+
+// Roadside trees
+const trees=[];
+const treeGeo = new THREE.ConeGeometry(0.3,1.5,8);
+const treeMat = new THREE.MeshBasicMaterial({color:0x00ff00});
+for(let i=0;i<1000;i+=15){
+  const t1 = new THREE.Mesh(treeGeo, treeMat); t1.position.set(-6,0.75,-i); scene.add(t1); trees.push(t1);
+  const t2 = new THREE.Mesh(treeGeo, treeMat); t2.position.set(6,0.75,-i-7); scene.add(t2); trees.push(t2);
+}
+
+// Player car
+const car = new THREE.Group();
+const body = new THREE.Mesh(new THREE.BoxGeometry(1.5,0.5,3), new THREE.MeshPhongMaterial({color:0xff0000}));
+body.position.y=0.5; car.add(body);
+const wheelGeo = new THREE.CylinderGeometry(0.3,0.3,0.2,16);
+const wheelMat = new THREE.MeshPhongMaterial({color:0x000000});
+const wheels=[];
+function addWheel(x,z){const w=new THREE.Mesh(wheelGeo,wheelMat); w.rotation.z=Math.PI/2; w.position.set(x,0.25,z); car.add(w); wheels.push(w);}
+addWheel(-0.7,-1); addWheel(0.7,-1); addWheel(-0.7,1); addWheel(0.7,1);
+car.position.y=0; car.position.z=0; scene.add(car);
+
+// State
+let keys={}, paused=false, level=1, coinCount=0, engineLvl=1, tireLvl=1;
+let speed=0.3, grip=0.12;
+let distance=0, raceDistance=2000;
+
+// HUD Buttons
+document.getElementById("pauseBtn").onclick=()=>paused=!paused;
+document.getElementById("restartBtn").onclick=()=>restartGame();
+document.getElementById("upgradeBtn").onclick=()=>upgrade();
+document.getElementById("gameOverRestartBtn").onclick=()=>restartGame();
+document.getElementById("winRestartBtn").onclick=()=>restartGame();
+
+// Coins
+let coins=[];
+function spawnCoin(z){ const c=new THREE.Mesh(new THREE.SphereGeometry(0.2,16,16), new THREE.MeshBasicMaterial({color:0xffff00})); c.position.set((Math.floor(Math.random()*3)-1)*3,0.25,z); scene.add(c); coins.push(c);}
+
+// AI cars
+let aiCars=[];
+function spawnAICar(z){ const a=new THREE.Mesh(new THREE.BoxGeometry(1,0.5,2), new THREE.MeshBasicMaterial({color:0x00ff00})); a.position.set((Math.floor(Math.random()*3)-1)*3,0.25,z); scene.add(a); aiCars.push(a);}
+
+// Obstacles
+let obstacles=[];
+function spawnObstacle(z){ const o=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.5,2.5), new THREE.MeshBasicMaterial({color:0xffa500})); o.position.set((Math.floor(Math.random()*3)-1)*3,0.25,z); scene.add(o); obstacles.push(o);}
+
+// Finish line
+const finishLine = new THREE.Mesh(new THREE.PlaneGeometry(10,2), new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide, wireframe:false}));
+finishLine.rotation.x = -Math.PI/2;
+finishLine.position.set(0,0.01,-raceDistance);
+scene.add(finishLine);
+
+// Spawn objects along track
+function spawnObjects(){ for(let i=20;i<raceDistance;i+=20){ spawnAICar(-i); spawnCoin(-i-5); if(i%60===0) spawnObstacle(-i-10); } }
+spawnObjects();
+
+// Update HUD
+function updateHUD(){ document.getElementById("coinCount").innerText=coinCount; document.getElementById("level").innerText=level; document.getElementById("engineLvl").innerText=engineLvl; document.getElementById("tireLvl").innerText=tireLvl; }
+
+// Upgrade
+function upgrade(){ if(coinCount>=5){ coinCount-=5; if(engineLvl<=tireLvl){engineLvl++; speed+=0.05;} else {tireLvl++; grip+=0.02;} updateHUD(); }}
+
+// Restart
+function restartGame(){
+  document.getElementById('gameOverOverlay').style.display='none';
+  document.getElementById('winOverlay').style.display='none';
+  car.position.set(0,0.25,0);
+  aiCars.forEach(c=>scene.remove(c));
+  coins.forEach(c=>scene.remove(c));
+  obstacles.forEach(c=>scene.remove(c));
+  aiCars=[]; coins=[]; obstacles=[];
+  coinCount=0; level=1; engineLvl=1; tireLvl=1; speed=0.3; grip=0.12; distance=0;
+  spawnObjects(); updateHUD(); paused=false;
+}
+
+// Camera
+camera.position.set(0,5,8);
+
+// Wheel rotation
+function rotateWheels(s){ wheels.forEach(w=>w.rotation.x-=s*0.1); }
+
+// Animate
+function animate(){
+  requestAnimationFrame(animate);
+  if(!paused){
+    if(keys["ArrowUp"]) {
+      car.position.z -= speed;
+      distance += speed;
+      if(distance >= raceDistance) winGame();
+    }
+    if(keys["ArrowDown"]) car.position.z += speed;
+    if(keys["ArrowLeft"]) car.position.x -= grip;
+    if(keys["ArrowRight"]) car.position.x += grip;
+    car.position.x=Math.max(-4,Math.min(4,car.position.x));
+
+    camera.position.x = car.position.x; camera.position.z = car.position.z+8;
+    camera.lookAt(car.position.x,car.position.y,car.position.z);
+
+    // AI cars
+    aiCars.forEach(ai=>{ ai.position.z += 0.15 + level*0.02; if(ai.position.z>car.position.z+10){ ai.position.z = car.position.z-200; ai.position.x=(Math.floor(Math.random()*3)-1)*3; } if(Math.abs(ai.position.x-car.position.x)<1 && Math.abs(ai.position.z-car.position.z)<1){ gameOver(); }});
+    // Obstacles
+    obstacles.forEach(o=>{ o.position.z += 0.15 + level*0.02; if(o.position.z>car.position.z+10){ o.position.z = car.position.z-200; o.position.x=(Math.floor(Math.random()*3)-1)*3; } if(Math.abs(o.position.x-car.position.x)<1 && Math.abs(o.position.z-car.position.z)<1){ gameOver(); }});
+    // Coins
+    coins.forEach((c,i)=>{ if(Math.abs(c.position.x-car.position.x)<1 && Math.abs(c.position.z-car.position.z)<1){ scene.remove(c); coins.splice(i,1); coinCount++; updateHUD(); if(coinCount%10===0){ level++; updateHUD(); } } });
+    rotateWheels(speed);
+  }
+  renderer.render(scene,camera);
+}
+
+// Game over
+function gameOver(){ paused=true; document.getElementById('finalCoins').innerText=coinCount; document.getElementById('finalLevel').innerText=level; document.getElementById('gameOverOverlay').style.display='block'; }
+
+// You win
+function winGame(){ paused=true; document.getElementById('winCoins').innerText=coinCount; document.getElementById('winLevel').innerText=level; document.getElementById('winOverlay').style.display='block'; }
+
+animate();
+window.addEventListener('keydown',e=>keys[e.key]=true);
+window.addEventListener('keyup',e=>keys[e.key]=false);
+window.addEventListener('resize',()=>{ camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight); });
+updateHUD();
+</script>
+</body>
+</html>
