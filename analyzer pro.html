@@ -52,12 +52,10 @@
         z-index: 3;
     }
 
-    /* Hover highlight entire column */
     td.highlight, th.highlight {
         background: #003d25 !important;
     }
 
-    /* Freeze first column */
     td:first-child, th:first-child {
         position: sticky;
         left: 0;
@@ -65,13 +63,11 @@
         z-index: 2;
     }
 
-    /* Anomaly styling */
     .anomaly {
         background: #330000 !important;
         color: #ff6666 !important;
     }
 
-    /* Filter panel */
     .panel {
         background: #111;
         padding: 15px;
@@ -92,7 +88,6 @@
         margin-top: 15px;
         border-left: 4px solid #00ff99;
     }
-
 </style>
 </head>
 
@@ -100,11 +95,13 @@
 
 <h1>Advanced CSV Analyzer (Black Theme)</h1>
 
+<!-- UPLOAD PANEL -->
 <div class="panel">
     <h3>Upload CSV File</h3>
     <input type="file" id="csvFile" accept=".csv">
 </div>
 
+<!-- SEARCH + FILTER PANEL -->
 <div class="panel">
     <h3>Search & Filter</h3>
     <input id="globalSearch" placeholder="Global search...">
@@ -112,6 +109,15 @@
     <select id="filterColumn"></select>
     <input id="filterValue" placeholder="Filter column by value">
     <button onclick="applyColumnFilter()">Apply Filter</button>
+</div>
+
+<!-- NEW DOWNLOAD PANEL -->
+<div class="panel">
+    <h3>Download Data</h3>
+    <button onclick="downloadCSV(originalData, 'full_dataset.csv')">Download Full Dataset</button>
+    <button onclick="downloadCSV(parsedData, 'filtered_dataset.csv')">Download Filtered Data</button>
+    <button onclick="downloadAnomalies()">Download Anomalies Only</button>
+    <button onclick="downloadClean()">Download Clean Data (No Anomalies)</button>
 </div>
 
 <h2>Data Table</h2>
@@ -199,8 +205,8 @@ function buildTable(data) {
     let html = "<table><thead><tr>";
 
     headers.forEach((h, i) => {
-        html += `<th onclick="sortColumn('${h}')" 
-                     onmouseover="highlightColumn(${i})" 
+        html += `<th onclick="sortColumn('${h}')"
+                     onmouseover="highlightColumn(${i})"
                      onmouseout="clearHighlight()">${h}</th>`;
     });
 
@@ -262,11 +268,10 @@ function updateFilterDropdown() {
 
 document.getElementById("globalSearch").addEventListener("input", function () {
     let q = this.value.toLowerCase();
-    let filtered = originalData.filter(row =>
+    parsedData = originalData.filter(row =>
         headers.some(h => (row[h] + "").toLowerCase().includes(q))
     );
-    parsedData = filtered;
-    buildTable(filtered);
+    buildTable(parsedData);
 });
 
 function applyColumnFilter() {
@@ -388,8 +393,45 @@ function smartInsights() {
 
     document.getElementById("insightContainer").innerHTML =
         `Detected <b>${outliers}</b> anomalous rows.<br>
-         Strong correlations appear where cell color is bright.<br>
-         Columns with wide value ranges likely create more anomalies.<br>`;
+         Bright correlation matrix cells show strong relationships.<br>
+         Wide numeric ranges produce more anomalies.<br>`;
+}
+
+/* ----------------------------------------------------------
+   DOWNLOAD FUNCTIONS
+-----------------------------------------------------------*/
+
+function downloadCSV(data, filename) {
+    if (data.length === 0) {
+        alert("No data to download.");
+        return;
+    }
+
+    let rows = [headers.join(",")];
+
+    data.forEach(row => {
+        let line = headers.map(h => row[h]).join(",");
+        rows.push(line);
+    });
+
+    let csvContent = rows.join("\n");
+    let blob = new Blob([csvContent], { type: "text/csv" });
+    let url = URL.createObjectURL(blob);
+
+    let a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+}
+
+function downloadAnomalies() {
+    let anomalies = parsedData.filter(r => r._anomaly);
+    downloadCSV(anomalies, "anomalies_only.csv");
+}
+
+function downloadClean() {
+    let clean = parsedData.filter(r => !r._anomaly);
+    downloadCSV(clean, "clean_data.csv");
 }
 
 </script>
