@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Advanced CSV Analyzer – Black Theme</title>
+
+<style>
+    body {
+        background: #0d0d0d;
+        color: #e6e6e6;
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+    }
+
+    h1, h2 {
+        color: #00ff99;
+    }
+
+    input, select, button {
+        padding: 10px;
+        background: #1a1a1a;
+        color: #00ff99;
+        border: 1px solid #00ff99;
+        border-radius: 5px;
+    }
+
+    button:hover {
+        background: #00cc7a;
+        color: black;
+        cursor: pointer;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        background: #111;
+    }
+
+    th, td {
+        padding: 8px;
+        border: 1px solid #00ff99;
+        text-align: left;
+    }
+
+    th {
+        background: #00331f;
+        cursor: pointer;
+        position: sticky;
+        top: 0;
+        z-index: 3;
+    }
+
+    /* Hover highlight entire column */
+    td.highlight, th.highlight {
+        background: #003d25 !important;
+    }
+
+    /* Freeze first column */
+    td:first-child, th:first-child {
+        position: sticky;
+        left: 0;
+        background: #002a19;
+        z-index: 2;
+    }
+
+    /* Anomaly styling */
+    .anomaly {
+        background: #330000 !important;
+        color: #ff6666 !important;
+    }
+
+    /* Filter panel */
+    .panel {
+        background: #111;
+        padding: 15px;
+        margin-bottom: 20px;
+        border: 1px solid #00ff99;
+        border-radius: 5px;
+    }
+
+    canvas {
+        background: #000;
+        border: 1px solid #00ff99;
+        margin: 20px 0;
+    }
+
+    .stats-box, .insight-box {
+        background: #111;
+        padding: 10px;
+        margin-top: 15px;
+        border-left: 4px solid #00ff99;
+    }
+
+</style>
+</head>
+
+<body>
+
+<h1>Advanced CSV Analyzer (Black Theme)</h1>
+
+<div class="panel">
+    <h3>Upload CSV File</h3>
+    <input type="file" id="csvFile" accept=".csv">
+</div>
+
+<div class="panel">
+    <h3>Search & Filter</h3>
+    <input id="globalSearch" placeholder="Global search...">
+    <br><br>
+    <select id="filterColumn"></select>
+    <input id="filterValue" placeholder="Filter column by value">
+    <button onclick="applyColumnFilter()">Apply Filter</button>
+</div>
+
+<h2>Data Table</h2>
+<div id="tableContainer"></div>
+
+<h2>Basic Statistics</h2>
+<div id="statsContainer"></div>
+
+<h2>Anomalies</h2>
+<div id="anomalyContainer"></div>
+
+<h2>Correlation Matrix</h2>
+<div id="corrContainer"></div>
+
+<h2>Smart Insights</h2>
+<div id="insightContainer" class="insight-box"></div>
+
+<h2>Charts</h2>
+<canvas id="chartCanvas" width="800" height="300"></canvas>
+
+<script>
+/* ----------------------------------------------------------
+   GLOBAL VARIABLES
+-----------------------------------------------------------*/
+let parsedData = [];
+let headers = [];
+let originalData = [];
+
+/* ----------------------------------------------------------
+   READ CSV FILE
+-----------------------------------------------------------*/
+document.getElementById("csvFile").addEventListener("change", function () {
+    const file = this.files[0];
+    const reader = new FileReader();
+
+    reader.onload = function (e) {
+        const text = e.target.result;
+        parseCSV(text);
+    };
+
+    reader.readAsText(file);
+});
+
+/* ----------------------------------------------------------
+   AUTO DELIMITER DETECTION + PARSER
+-----------------------------------------------------------*/
+function detectDelimiter(text) {
+    const delimiters = [",", ";", "\t"];
+    let best = ",";
+    let max = 0;
+
+    delimiters.forEach(d => {
+        let count = text.split("\n")[0].split(d).length;
+        if (count > max) { max = count; best = d; }
+    });
+
+    return best;
+}
+
+function parseCSV(text) {
+    const delimiter = detectDelimiter(text);
+    const lines = text.split("\n").filter(r => r.trim() !== "");
+
+    headers = lines[0].split(delimiter).map(h => h.trim());
+    parsedData = lines.slice(1).map(row => {
+        let values = row.split(delimiter);
+        let obj = {};
+        headers.forEach((h, i) => obj[h] = values[i]);
+        return obj;
+    });
+
+    originalData = [...parsedData];
+    buildTable(parsedData);
+    updateFilterDropdown();
+    computeStats();
+    detectAnomalies();
+    correlationMatrix();
+    smartInsights();
+}
+
+/* ----------------------------------------------------------
+   BUILD TABLE
+-----------------------------------------------------------*/
+function buildTable(data) {
+    let html = "<table><thead><tr>";
+
+    headers.forEach((h, i) => {
+        html += `<th onclick="sortColumn('${h}')" 
+                     onmouseover="highlightColumn(${i})" 
+                     onmouseout="clearHighlight()">${h}</th>`;
+    });
+
+    html += "</tr></thead><tbody>";
+
+    data.forEach(row => {
+        html += "<tr>";
+        headers.forEach(h => {
+            let cl = row._anomaly ? "class='anomaly'" : "";
+            html += `<td ${cl}>${row[h]}</td>`;
+        });
+        html += "</tr>";
+    });
+
+    html += "</tbody></table>";
+    document.getElementById("tableContainer").innerHTML = html;
+}
+
+/* ----------------------------------------------------------
+   HIGHLIGHT COLUMN ON HOVER
+-----------------------------------------------------------*/
+function highlightColumn(index) {
+    document.querySelectorAll("tr").forEach(row => {
+        let cell = row.children[index];
+        if (cell) cell.classList.add("highlight");
+    });
+}
+
+function clearHighlight() {
+    document.querySelectorAll(".highlight").forEach(c => c.classList.remove("highlight"));
+}
+
+/* ----------------------------------------------------------
+   SORTING
+-----------------------------------------------------------*/
+let sortDirection = 1;
+function sortColumn(column) {
+    parsedData.sort((a, b) => {
+        let x = a[column], y = b[column];
+        let nx = parseFloat(x), ny = parseFloat(y);
+
+        if (!isNaN(nx) && !isNaN(ny)) {
+            return (nx - ny) * sortDirection;
+        }
+        return x.localeCompare(y) * sortDirection;
+    });
+
+    sortDirection *= -1;
+    buildTable(parsedData);
+}
+
+/* ----------------------------------------------------------
+   FILTERS
+-----------------------------------------------------------*/
+function updateFilterDropdown() {
+    let col = document.getElementById("filterColumn");
+    col.innerHTML = headers.map(h => `<option>${h}</option>`).join("");
+}
+
+document.getElementById("globalSearch").addEventListener("input", function () {
+    let q = this.value.toLowerCase();
+    let filtered = originalData.filter(row =>
+        headers.some(h => (row[h] + "").toLowerCase().includes(q))
+    );
+    parsedData = filtered;
+    buildTable(filtered);
+});
+
+function applyColumnFilter() {
+    let col = document.getElementById("filterColumn").value;
+    let val = document.getElementById("filterValue").value.toLowerCase();
+
+    parsedData = originalData.filter(r =>
+        (r[col] + "").toLowerCase().includes(val)
+    );
+
+    buildTable(parsedData);
+}
+
+/* ----------------------------------------------------------
+   BASIC STATISTICS
+-----------------------------------------------------------*/
+function computeStats() {
+    let container = document.getElementById("statsContainer");
+    container.innerHTML = "";
+
+    headers.forEach(h => {
+        let nums = parsedData.map(r => parseFloat(r[h])).filter(x => !isNaN(x));
+        if (nums.length === 0) return;
+
+        let mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+        let sd = Math.sqrt(nums.map(x => (x - mean) ** 2).reduce((a, b) => a + b) / nums.length);
+        let min = Math.min(...nums), max = Math.max(...nums);
+        let median = nums.sort((a, b) => a - b)[Math.floor(nums.length / 2)];
+
+        container.innerHTML += `
+            <div class="stats-box">
+                <h3>${h}</h3>
+                Mean: ${mean}<br>
+                Median: ${median}<br>
+                Min: ${min}<br>
+                Max: ${max}<br>
+                Standard Deviation: ${sd.toFixed(3)}<br>
+                Count: ${nums.length}<br>
+            </div>
+        `;
+    });
+}
+
+/* ----------------------------------------------------------
+   ANOMALY DETECTION (Z-score + SD + IQR)
+-----------------------------------------------------------*/
+function detectAnomalies() {
+    parsedData.forEach(r => r._anomaly = false);
+
+    headers.forEach(h => {
+        let nums = parsedData.map(r => parseFloat(r[h])).filter(x => !isNaN(x));
+        if (!nums.length) return;
+
+        let mean = nums.reduce((a, b) => a + b) / nums.length;
+        let sd = Math.sqrt(nums.map(x => (x - mean) ** 2).reduce((a, b) => a + b) / nums.length);
+
+        let sorted = nums.slice().sort((a, b) => a - b);
+        let q1 = sorted[Math.floor(nums.length * 0.25)];
+        let q3 = sorted[Math.floor(nums.length * 0.75)];
+        let iqr = q3 - q1;
+
+        parsedData.forEach(row => {
+            let val = parseFloat(row[h]);
+            if (isNaN(val)) return;
+
+            let z = (val - mean) / sd;
+            let iqrFlag = val < (q1 - 1.5 * iqr) || val > (q3 + 1.5 * iqr);
+
+            if (Math.abs(z) > 2 || iqrFlag) {
+                row._anomaly = true;
+            }
+        });
+    });
+
+    buildTable(parsedData);
+}
+
+/* ----------------------------------------------------------
+   CORRELATION MATRIX
+-----------------------------------------------------------*/
+function correlationMatrix() {
+    let nums = headers.filter(h => parsedData.some(r => !isNaN(parseFloat(r[h]))));
+    let html = "<table><tr><th></th>";
+
+    nums.forEach(h => html += `<th>${h}</th>`);
+    html += "</tr>";
+
+    nums.forEach(a => {
+        html += `<tr><th>${a}</th>`;
+        nums.forEach(b => {
+            let arrA = parsedData.map(r => parseFloat(r[a])).filter(x => !isNaN(x));
+            let arrB = parsedData.map(r => parseFloat(r[b])).filter(x => !isNaN(x));
+
+            let meanA = arrA.reduce((x, y) => x + y) / arrA.length;
+            let meanB = arrB.reduce((x, y) => x + y) / arrB.length;
+
+            let cov = arrA.map((x, i) => (x - meanA) * (arrB[i] - meanB))
+                .reduce((x, y) => x + y) / arrA.length;
+
+            let sdA = Math.sqrt(arrA.map(x => (x - meanA) ** 2).reduce((a, b) => a + b) / arrA.length);
+            let sdB = Math.sqrt(arrB.map(x => (x - meanB) ** 2).reduce((a, b) => a + b) / arrB.length);
+
+            let corr = cov / (sdA * sdB);
+
+            html += `<td style="background: rgba(0,255,153,${Math.abs(corr)})">${corr.toFixed(2)}</td>`;
+        });
+        html += "</tr>";
+    });
+
+    html += "</table>";
+    document.getElementById("corrContainer").innerHTML = html;
+}
+
+/* ----------------------------------------------------------
+   SMART INSIGHTS
+-----------------------------------------------------------*/
+function smartInsights() {
+    let outliers = parsedData.filter(r => r._anomaly).length;
+
+    document.getElementById("insightContainer").innerHTML =
+        `Detected <b>${outliers}</b> anomalous rows.<br>
+         Strong correlations appear where cell color is bright.<br>
+         Columns with wide value ranges likely create more anomalies.<br>`;
+}
+
+</script>
+
+</body>
+</html>
